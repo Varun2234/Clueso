@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Clueso Capture Clone",
+  "version": "1.0",
+  "description": "Capture screen and generate AI guides",
+  "permissions": [
+    "storage",
+    "tabs",
+    "offscreen",
+    "desktopCapture",
+    "downloads"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
