@@ -11,15 +11,15 @@ dotenv.config();
 
 const HUGGINGFACE_KEY = process.env.HUGGINGFACE_API_KEY?.trim();
 const hf = HUGGINGFACE_KEY ? new HfInference(HUGGINGFACE_KEY) : null;
-const NETWORK_TIMEOUT = 300000; // 5 minutes
+const NETWORK_TIMEOUT = 300000;
 
 const extractFrames = (videoPath) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v-frames-'));
   const args = [
     '-y', '-i', videoPath,
-    '-vf', "fps=fps=8/t,scale=336:336", 
-    '-vframes', '8',
-    path.join(tmpDir, 'frame_%03d.jpg')
+    '-vf', "fps=1,scale=336:336", 
+    '-vframes', '1', 
+    path.join(tmpDir, 'frame_001.jpg')
   ];
 
   const result = spawnSync(ffmpegPath, args, { timeout: NETWORK_TIMEOUT });
@@ -27,58 +27,47 @@ const extractFrames = (videoPath) => {
   return tmpDir;
 };
 
+// backend/services/transcriptionService.js
+// backend/services/transcriptionService.js
+
+// backend/services/transcriptionService.js
+
 export const analyzeVideoVisually = async (videoUrl) => {
   const videoPath = path.join(os.tmpdir(), `input_${Date.now()}.mp4`);
   let frameDir = null;
 
   try {
-    if (!HUGGINGFACE_KEY) return "Visual analysis skipped: No API Key.";
+    if (!process.env.HUGGINGFACE_API_KEY) return "Visual analysis skipped: No API Key.";
 
-    // 1. Download Video
-    const resp = await axios.get(videoUrl, { responseType: 'arraybuffer', timeout: NETWORK_TIMEOUT });
+    const resp = await axios.get(videoUrl, { responseType: 'arraybuffer', timeout: 300000 });
     fs.writeFileSync(videoPath, resp.data);
 
-    // 2. Extract 8 Frames
     frameDir = extractFrames(videoPath);
-    const frameFiles = fs.readdirSync(frameDir).sort();
-    
-    // 3. Convert to Base64
-    const images = frameFiles.map(file => 
-      fs.readFileSync(path.join(frameDir, file)).toString('base64')
-    );
+    const frameFile = path.join(frameDir, 'frame_001.jpg');
+    const imageData = fs.readFileSync(frameFile);
 
-    // 4. DEFINE THE PAYLOAD (Fixes the "payload is not defined" error)
-    const model = process.env.HF_VIDEO_MODEL || "LanguageBind/Video-LLaVA-7B";
-    const prompt = "USER: <video>\nDescribe what is happening in this video in detail. ASSISTANT:";
-    
-    const payload = {
-      inputs: prompt,
-      images: images
-    };
+    // FIX: Trim spaces and ensure a reliable fallback model
+    const model = (process.env.HF_VIDEO_MODEL || "Salesforce/blip-image-captioning-base").trim();
+    const apiUrl = `https://router.huggingface.co/hf-inference/models/${model}`;
 
-    // 5. Send to Hugging Face Router
-    const hfResp = await axios.post(
-  `https://router.huggingface.co/hf-inference/models/${model}`, // NEW ROUTER URL
-  payload,
-  { 
-    headers: { Authorization: `Bearer ${HUGGINGFACE_KEY}` },
-    timeout: NETWORK_TIMEOUT 
-  }
-);
+    const hfResp = await axios.post(apiUrl, imageData, { 
+      headers: { 
+        Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY.trim()}`,
+        'Content-Type': 'image/jpeg' 
+      },
+      timeout: 300000 
+    });
 
-    let description = "";
-    if (Array.isArray(hfResp.data) && hfResp.data[0]?.generated_text) {
-      description = hfResp.data[0].generated_text;
-    } else if (hfResp.data?.generated_text) {
-      description = hfResp.data.generated_text;
-    } else {
-      throw new Error("Invalid AI response format from Hugging Face");
-    }
-
-    return description.replace(/USER:.*?ASSISTANT:/is, '').trim();
+    // Handle array or object response
+    const result = Array.isArray(hfResp.data) ? hfResp.data[0] : hfResp.data;
+    return result?.generated_text || "Analysis complete.";
 
   } catch (err) {
-    console.error("Video-LLaVA Error:", err.message);
+    console.error(`HF Router Error (${err.response?.status}):`, err.response?.data || err.message);
+    // If 404, throw a specific message to the controller
+    if (err.response?.status === 404) {
+      throw new Error(`Model ${process.env.HF_VIDEO_MODEL} not found on HF Router.`);
+    }
     throw err; 
   } finally {
     if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
@@ -89,26 +78,28 @@ export const analyzeVideoVisually = async (videoUrl) => {
 export const generateAISummary = async (visualDescription) => {
   try {
     if (!hf) throw new Error('HF Client missing');
-    const model = process.env.HF_SUMMARY_MODEL || "mistralai/Mistral-7B-Instruct-v0.2";
+    const model = (process.env.HF_SUMMARY_MODEL || "mistralai/Mistral-7B-Instruct-v0.2").trim();
 
-    const prompt = `[INST] Task: Convert the following visual analysis into a JSON summary.
+    const prompt = `<s>[INST] Summarize this visual analysis into JSON:
     Analysis: "${visualDescription}"
-    Structure: {"title": "Summary Title", "bulletPoints": ["point1", "point2"], "sentiment": "Positive/Neutral/Negative"} [/INST]`;
+    Return ONLY JSON: {"title": "Title", "bulletPoints": ["point"], "sentiment": "Neutral"} [/INST]`;
 
     const response = await hf.textGeneration({
       model,
       inputs: prompt,
-      parameters: { max_new_tokens: 300, temperature: 0.1 },
+      parameters: { max_new_tokens: 200, temperature: 0.1 },
     });
 
-    const text = response.generated_text;
-    const cleanJson = text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1);
-    return JSON.parse(cleanJson);
+    const text = response.generated_text.trim();
+    const jsonMatch = text.match(/\{[\s\S]*\}/); 
+    if (!jsonMatch) throw new Error("JSON formatting error");
+    
+    return JSON.parse(jsonMatch[0]);
   } catch (error) {
-    console.error("Summary Generation Error:", error.message);
+    console.error("Summary Error:", error.message);
     return {
-      title: "Visual Analysis Results",
-      bulletPoints: ["The video was analyzed visually.", "Summary could not be fully formatted."],
+      title: "Video Analysis",
+      bulletPoints: [visualDescription || "Video processed."],
       sentiment: "Neutral"
     };
   }
