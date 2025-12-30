@@ -8,8 +8,9 @@ const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
     folder: 'clueso_recordings',
-    resource_type: 'video', // Specifically allow video files
+    resource_type: 'video',
     allowed_formats: ['mp4', 'webm', 'mov'],
+    chunk_size: 6000000, // 6MB chunks for more stable large uploads
     public_id: (req, file) => `video_${Date.now()}_${file.originalname.split('.')[0]}`,
   },
 });

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ChevronLeft, Play, Sparkles, FileText, Clock, AlertCircle } from 'lucide-react';
+import { ChevronLeft, Play, Sparkles, FileText, Clock, AlertCircle, Video } from 'lucide-react';
 import axiosInstance from '../api/axiosInstance';
 import Button from '../components/ui/Button.jsx';
 
@@ -11,14 +11,10 @@ const FeedbackDetail = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState(null);
 
-  /**
-   * Fetch feedback details on component mount
-   */
   useEffect(() => {
     const fetchDetails = async () => {
       try {
         setIsLoading(true);
-        // GET request to your backend: /api/feedback/:id
         const res = await axiosInstance.get(`/feedback/${id}`);
         setFeedback(res.data);
       } catch (err) {
@@ -28,28 +24,29 @@ const FeedbackDetail = () => {
         setIsLoading(false);
       }
     };
-
     fetchDetails();
   }, [id]);
 
   /**
-   * Handles Manual AI processing if summary doesn't exist yet
+   * FIXED: Added robust async error handling to prevent Promise rejections
    */
   const handleGenerateSummary = async () => {
     if (!feedback?.video?._id) return;
     
     setIsGenerating(true);
     try {
-      // Calls your AI transcription + summary service
+      // POST request to trigger AI visual analysis and summary
       const res = await axiosInstance.post(`/video/${feedback.video._id}/insights`);
       
-      // Update local state with the new AI data
+      // Update local state with newly generated AI insights
       setFeedback(prev => ({
         ...prev,
         aiSummary: res.data.insights
       }));
     } catch (err) {
-      alert("AI Processing failed. Please check backend logs.");
+      console.error("AI Generation Error:", err);
+      const errorMsg = err.response?.data?.message || "AI Processing failed. Please check backend logs.";
+      alert(errorMsg);
     } finally {
       setIsGenerating(false);
     }
@@ -66,14 +63,12 @@ const FeedbackDetail = () => {
 
   return (
     <div className="space-y-6 fade-in">
-      {/* Breadcrumbs */}
       <Link to="/dashboard" className="flex items-center text-sm text-gray-500 hover:text-blue-600 transition-colors w-fit">
         <ChevronLeft size={16} />
         Back to Dashboard
       </Link>
 
       <div className="flex flex-col lg:flex-row gap-6">
-        {/* Left Side: Real Video Player */}
         <div className="flex-1">
           <div className="bg-black rounded-xl aspect-video relative group overflow-hidden shadow-2xl border border-gray-800">
             {feedback?.video?.url ? (
@@ -81,7 +76,6 @@ const FeedbackDetail = () => {
                 src={feedback.video.url} 
                 controls 
                 className="w-full h-full object-contain"
-                poster="/video-placeholder.png" // Optional: add a poster image
               />
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-gray-500">
@@ -95,7 +89,7 @@ const FeedbackDetail = () => {
                 {feedback.title}
               </h2>
               <p className="text-xs text-gray-300 flex items-center gap-2 mt-1">
-                <Clock size={12} /> {new Date(feedback.createdAt).toLocaleDateString()}
+                <Clock size={12} /> {feedback.createdAt ? new Date(feedback.createdAt).toLocaleDateString() : 'N/A'}
               </p>
             </div>
           </div>
@@ -106,10 +100,8 @@ const FeedbackDetail = () => {
           </div>
         </div>
 
-        {/* Right Side: AI Insights Section */}
         <div className="w-full lg:w-96 space-y-6">
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm relative overflow-hidden">
-            {/* Design detail: gradient bar for AI feel */}
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 to-blue-500"></div>
             
             <div className="flex items-center gap-2 mb-4">
@@ -126,7 +118,7 @@ const FeedbackDetail = () => {
                   onClick={handleGenerateSummary} 
                   isLoading={isGenerating}
                   variant="primary"
-                  className="w-full bg-gradient-to-r from-purple-600 to-blue-600 border-none"
+                  className="w-full bg-gradient-to-r from-purple-600 to-blue-600 border-none text-white"
                 >
                   Generate AI Summary
                 </Button>
@@ -135,19 +127,18 @@ const FeedbackDetail = () => {
               <div className="space-y-4 fade-in">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Key Findings</label>
-                  {/* Ensure it works whether the AI calls it 'points', 'bulletPoints', or 'takeaways' */}
-<ul className="mt-3 space-y-4">
-  {(feedback.aiSummary.bulletPoints || 
-    feedback.aiSummary.points || 
-    feedback.aiSummary.takeaways || []).map((pt, i) => (
-    <li key={i} className="text-sm text-gray-700 flex gap-3 leading-snug">
-      <span className="flex-shrink-0 w-5 h-5 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center text-[10px] font-bold">
-        {i + 1}
-      </span> 
-      {pt}
-    </li>
-  ))}
-</ul>
+                  <ul className="mt-3 space-y-4">
+                    {(feedback.aiSummary.bulletPoints || 
+                      feedback.aiSummary.points || 
+                      feedback.aiSummary.takeaways || []).map((pt, i) => (
+                      <li key={i} className="text-sm text-gray-700 flex gap-3 leading-snug">
+                        <span className="flex-shrink-0 w-5 h-5 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center text-[10px] font-bold">
+                          {i + 1}
+                        </span> 
+                        {pt}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
                 
                 <div className="pt-6 border-t border-gray-100">
@@ -166,16 +157,15 @@ const FeedbackDetail = () => {
             )}
           </div>
 
-          {/* Transcript Section */}
           <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 text-white shadow-xl">
             <div className="flex gap-3 items-center mb-4">
               <FileText className="text-blue-400" size={20} />
-              <h4 className="text-sm font-bold">Transcript</h4>
+              <h4 className="text-sm font-bold">Visual Analysis</h4>
             </div>
             <div className="max-h-48 overflow-y-auto pr-2 custom-scrollbar text-xs leading-relaxed text-gray-400 italic">
               {feedback.aiSummary?.transcript 
                 ? `"${feedback.aiSummary.transcript}"` 
-                : "No transcript available. Generate AI insights to see the text conversion."}
+                : "No visual analysis available. Generate insights to see the video description."}
             </div>
           </div>
         </div>
