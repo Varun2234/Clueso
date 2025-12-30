@@ -1,6 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import axios from 'axios';
 import connectDB from './config/db.js';
 
 // Route Imports
@@ -21,7 +22,7 @@ app.use(cors({
   credentials: true
 }));
 
-// Standard body parsers (MUST be after CORS and before routes)
+// Standard body parsers
 app.use(express.json()); 
 app.use(express.urlencoded({ extended: true }));
 
@@ -31,6 +32,23 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/auth', authRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/video', videoRoutes);
+
+/**
+ * Debug Route to verify Hugging Face Token
+ */
+app.get('/api/debug/hf-test', async (req, res) => {
+  try {
+    const response = await axios.get('https://huggingface.co/api/whoami-v2', {
+      headers: { Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}` }
+    });
+    res.json({ message: "Token is valid!", user: response.data.name });
+  } catch (error) {
+    res.status(401).json({ 
+      message: "Token is invalid or expired", 
+      error: error.response?.data || error.message 
+    });
+  }
+});
 
 /**
  * Global Error Handler

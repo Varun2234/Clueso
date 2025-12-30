@@ -12,31 +12,31 @@ const UploadFeedback = () => {
   const [isUploading, setIsUploading] = useState(false);
   const navigate = useNavigate();
 
-  const handleUpload = async (e) => {
-    e.preventDefault();
-    if (!file || isUploading) return;
-    setIsUploading(true);
+ const handleUpload = async (e) => {
+  e.preventDefault();
+  if (!file || isUploading) return;
+  setIsUploading(true);
 
-    try {
-      const formData = new FormData();
-      formData.append('video', file);
+  try {
+    const formData = new FormData();
+    formData.append('video', file);
 
-      // 1. Upload Video
-      const vRes = await axiosInstance.post('/video/upload', formData);
-      const videoId = vRes.data._id;
+    const videoRes = await axiosInstance.post('/video/upload', formData);
+    const videoId = videoRes?.data?._id;
 
-      // 2. Create Feedback (Critical: MUST await this)
-      await axiosInstance.post('/feedback', { title, description, videoId, status: 'Processing' });
+    await axiosInstance.post('/feedback', { title, description, videoId, status: 'Processing' });
 
-      // 3. Trigger AI (Detached)
-      axiosInstance.post(`/video/${videoId}/insights`).catch(err => console.error(err));
+    // Trigger background AI
+    axiosInstance.post(`/video/${videoId}/insights`).catch(err => console.error("Background AI error:", err));
 
-      navigate('/dashboard');
-    } catch (err) {
-      alert(err.response?.data?.message || "Upload failed");
-      setIsUploading(false);
-    }
-  };
+    navigate('/dashboard');
+  } catch (err) {
+    console.error("Upload process failed:", err);
+    alert(err?.response?.data?.message || 'An error occurred during upload.');
+  } finally {
+    setIsUploading(false);
+  }
+};
 
   return (
     <div className="max-w-2xl mx-auto p-6">

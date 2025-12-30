@@ -13,12 +13,8 @@ const HUGGINGFACE_KEY = process.env.HUGGINGFACE_API_KEY?.trim();
 const hf = HUGGINGFACE_KEY ? new HfInference(HUGGINGFACE_KEY) : null;
 const NETWORK_TIMEOUT = 300000; // 5 minutes
 
-/**
- * Extracts exactly 8 frames at equal intervals across the video duration
- */
 const extractFrames = (videoPath) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v-frames-'));
-  // This filter ensures we get 8 frames regardless of video length
   const args = [
     '-y', '-i', videoPath,
     '-vf', "fps=fps=8/t,scale=336:336", 
@@ -28,13 +24,9 @@ const extractFrames = (videoPath) => {
 
   const result = spawnSync(ffmpegPath, args, { timeout: NETWORK_TIMEOUT });
   if (result.error) throw new Error(`FFmpeg failed: ${result.error.message}`);
-  
   return tmpDir;
 };
 
-/**
- * Analyzes video visual content using Video-LLaVA
- */
 export const analyzeVideoVisually = async (videoUrl) => {
   const videoPath = path.join(os.tmpdir(), `input_${Date.now()}.mp4`);
   let frameDir = null;
@@ -42,56 +34,58 @@ export const analyzeVideoVisually = async (videoUrl) => {
   try {
     if (!HUGGINGFACE_KEY) return "Visual analysis skipped: No API Key.";
 
-    // Download video
+    // 1. Download Video
     const resp = await axios.get(videoUrl, { responseType: 'arraybuffer', timeout: NETWORK_TIMEOUT });
     fs.writeFileSync(videoPath, resp.data);
 
-    // Extract frames
+    // 2. Extract 8 Frames
     frameDir = extractFrames(videoPath);
     const frameFiles = fs.readdirSync(frameDir).sort();
     
-    // Convert to Base64 sequence
+    // 3. Convert to Base64
     const images = frameFiles.map(file => 
       fs.readFileSync(path.join(frameDir, file)).toString('base64')
     );
 
+    // 4. DEFINE THE PAYLOAD (Fixes the "payload is not defined" error)
     const model = process.env.HF_VIDEO_MODEL || "LanguageBind/Video-LLaVA-7B";
     const prompt = "USER: <video>\nDescribe what is happening in this video in detail. ASSISTANT:";
+    
+    const payload = {
+      inputs: prompt,
+      images: images
+    };
 
+    // 5. Send to Hugging Face Router
     const hfResp = await axios.post(
-      `https://api-inference.huggingface.co/models/${model}`,
-      { inputs: prompt, images: images },
-      { 
-        headers: { Authorization: `Bearer ${HUGGINGFACE_KEY}` },
-        timeout: NETWORK_TIMEOUT 
-      }
-    );
+  `https://router.huggingface.co/hf-inference/models/${model}`, // NEW ROUTER URL
+  payload,
+  { 
+    headers: { Authorization: `Bearer ${HUGGINGFACE_KEY}` },
+    timeout: NETWORK_TIMEOUT 
+  }
+);
 
-    // Robust parsing of nested HF responses
     let description = "";
     if (Array.isArray(hfResp.data) && hfResp.data[0]?.generated_text) {
       description = hfResp.data[0].generated_text;
     } else if (hfResp.data?.generated_text) {
       description = hfResp.data.generated_text;
     } else {
-      throw new Error("Invalid AI response format");
+      throw new Error("Invalid AI response format from Hugging Face");
     }
 
-    // Remove the prompt from the response if the model echoes it
     return description.replace(/USER:.*?ASSISTANT:/is, '').trim();
 
   } catch (err) {
     console.error("Video-LLaVA Error:", err.message);
-    throw err; // Throw error to trigger controller catch block properly
+    throw err; 
   } finally {
     if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
     if (frameDir && fs.existsSync(frameDir)) fs.rmSync(frameDir, { recursive: true, force: true });
   }
 };
 
-/**
- * Generates AI Summary (Mistral)
- */
 export const generateAISummary = async (visualDescription) => {
   try {
     if (!hf) throw new Error('HF Client missing');
@@ -99,9 +93,7 @@ export const generateAISummary = async (visualDescription) => {
 
     const prompt = `[INST] Task: Convert the following visual analysis into a JSON summary.
     Analysis: "${visualDescription}"
-    
-    Structure: {"title": "Summary Title", "bulletPoints": ["point1", "point2"], "sentiment": "Positive/Neutral/Negative"}
-    [/INST]`;
+    Structure: {"title": "Summary Title", "bulletPoints": ["point1", "point2"], "sentiment": "Positive/Neutral/Negative"} [/INST]`;
 
     const response = await hf.textGeneration({
       model,
@@ -114,10 +106,9 @@ export const generateAISummary = async (visualDescription) => {
     return JSON.parse(cleanJson);
   } catch (error) {
     console.error("Summary Generation Error:", error.message);
-    // Return a structured error so the controller doesn't use the fallback string
     return {
       title: "Visual Analysis Results",
-      bulletPoints: ["The video frames were successfully analyzed.", "Summary generation is currently limited."],
+      bulletPoints: ["The video was analyzed visually.", "Summary could not be fully formatted."],
       sentiment: "Neutral"
     };
   }
