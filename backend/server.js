@@ -36,17 +36,13 @@ app.use('/api/video', videoRoutes);
 /**
  * Debug Route to verify Hugging Face Token
  */
-app.get('/api/debug/hf-test', async (req, res) => {
+app.get('/api/debug/gemini-test', async (req, res) => {
   try {
-    const response = await axios.get('https://huggingface.co/api/whoami-v2', {
-      headers: { Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}` }
-    });
-    res.json({ message: "Token is valid!", user: response.data.name });
+    const testModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const result = await testModel.generateContent("Test: Are you working?");
+    res.json({ message: "Gemini API key is valid!", response: result.response.text() });
   } catch (error) {
-    res.status(401).json({ 
-      message: "Token is invalid or expired", 
-      error: error.response?.data || error.message 
-    });
+    res.status(500).json({ message: "Gemini check failed", error: error.message });
   }
 });
 

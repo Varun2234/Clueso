@@ -1,104 +1,70 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import axios from 'axios';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import { spawnSync } from 'child_process';
-import ffmpegPath from 'ffmpeg-static';
-import { HfInference } from '@huggingface/inference';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const HUGGINGFACE_KEY = process.env.HUGGINGFACE_API_KEY?.trim();
-const hf = HUGGINGFACE_KEY ? new HfInference(HUGGINGFACE_KEY) : null;
-const NETWORK_TIMEOUT = 300000;
+// Initialize the Gemini SDK
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
-const extractFrames = (videoPath) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v-frames-'));
-  const args = [
-    '-y', '-i', videoPath,
-    '-vf', "fps=1,scale=336:336", 
-    '-vframes', '1', 
-    path.join(tmpDir, 'frame_001.jpg')
-  ];
-
-  const result = spawnSync(ffmpegPath, args, { timeout: NETWORK_TIMEOUT });
-  if (result.error) throw new Error(`FFmpeg failed: ${result.error.message}`);
-  return tmpDir;
-};
-
-// backend/services/transcriptionService.js
-// backend/services/transcriptionService.js
-
-// backend/services/transcriptionService.js
-
+/**
+ * Analyzes video natively using Gemini 1.5.
+ * This replaces the old analyzeVideoVisually that used FFmpeg and Hugging Face.
+ */
 export const analyzeVideoVisually = async (videoUrl) => {
-  const videoPath = path.join(os.tmpdir(), `input_${Date.now()}.mp4`);
-  let frameDir = null;
-
   try {
-    if (!process.env.HUGGINGFACE_API_KEY) return "Visual analysis skipped: No API Key.";
+    if (!process.env.GEMINI_API_KEY) return "Analysis skipped: No Gemini API Key.";
 
-    const resp = await axios.get(videoUrl, { responseType: 'arraybuffer', timeout: 300000 });
-    fs.writeFileSync(videoPath, resp.data);
+    // Download the video from Cloudinary as a buffer
+    const resp = await axios.get(videoUrl, { responseType: 'arraybuffer' });
+    const videoBase64 = Buffer.from(resp.data).toString('base64');
 
-    frameDir = extractFrames(videoPath);
-    const frameFile = path.join(frameDir, 'frame_001.jpg');
-    const imageData = fs.readFileSync(frameFile);
-
-    // FIX: Trim spaces and ensure a reliable fallback model
-    const model = (process.env.HF_VIDEO_MODEL || "Salesforce/blip-image-captioning-base").trim();
-    const apiUrl = `https://router.huggingface.co/hf-inference/models/${model}`;
-
-    const hfResp = await axios.post(apiUrl, imageData, { 
-      headers: { 
-        Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY.trim()}`,
-        'Content-Type': 'image/jpeg' 
+    // Define the prompt for the model
+    const prompt = "Please analyze this video and describe what is happening in detail.";
+    
+    // Generate content using the video data
+    const result = await model.generateContent([
+      {
+        inlineData: {
+          mimeType: "video/mp4",
+          data: videoBase64
+        }
       },
-      timeout: 300000 
-    });
+      { text: prompt },
+    ]);
 
-    // Handle array or object response
-    const result = Array.isArray(hfResp.data) ? hfResp.data[0] : hfResp.data;
-    return result?.generated_text || "Analysis complete.";
-
+    const response = await result.response;
+    return response.text() || "Analysis complete.";
   } catch (err) {
-    console.error(`HF Router Error (${err.response?.status}):`, err.response?.data || err.message);
-    // If 404, throw a specific message to the controller
-    if (err.response?.status === 404) {
-      throw new Error(`Model ${process.env.HF_VIDEO_MODEL} not found on HF Router.`);
-    }
-    throw err; 
-  } finally {
-    if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
-    if (frameDir && fs.existsSync(frameDir)) fs.rmSync(frameDir, { recursive: true, force: true });
+    console.error("Gemini Video Analysis Error:", err.message);
+    throw new Error(`Gemini Video Analysis Failed: ${err.message}`);
   }
 };
 
+/**
+ * Generates a structured summary from the visual description.
+ */
 export const generateAISummary = async (visualDescription) => {
   try {
-    if (!hf) throw new Error('HF Client missing');
-    const model = (process.env.HF_SUMMARY_MODEL || "mistralai/Mistral-7B-Instruct-v0.2").trim();
+    const prompt = `Based on this video analysis: "${visualDescription}", 
+    generate a summary in JSON format.
+    Required format: {"title": "Title", "bulletPoints": ["point1", "point2"], "sentiment": "Neutral"}`;
 
-    const prompt = `<s>[INST] Summarize this visual analysis into JSON:
-    Analysis: "${visualDescription}"
-    Return ONLY JSON: {"title": "Title", "bulletPoints": ["point"], "sentiment": "Neutral"} [/INST]`;
-
-    const response = await hf.textGeneration({
-      model,
-      inputs: prompt,
-      parameters: { max_new_tokens: 200, temperature: 0.1 },
-    });
-
-    const text = response.generated_text.trim();
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text().trim();
+    
+    // Extract JSON in case the model returns markdown code blocks
     const jsonMatch = text.match(/\{[\s\S]*\}/); 
     if (!jsonMatch) throw new Error("JSON formatting error");
     
     return JSON.parse(jsonMatch[0]);
   } catch (error) {
-    console.error("Summary Error:", error.message);
+    console.error("Gemini Summary Error:", error.message);
+    // Fallback object to prevent backend crashes
     return {
-      title: "Video Analysis",
+      title: "Video Insights",
       bulletPoints: [visualDescription || "Video processed."],
       sentiment: "Neutral"
     };
