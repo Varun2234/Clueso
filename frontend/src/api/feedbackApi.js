@@ -16,8 +16,7 @@ export const feedbackApi = {
     const response = await axiosInstance.post('/feedback', feedbackData);
     return response.data;
   },
-
-  // New delete method
+  //delete method
   delete: async (id) => {
     const response = await axiosInstance.delete(`/feedback/${id}`);
     return response.data;

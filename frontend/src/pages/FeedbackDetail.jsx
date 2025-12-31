@@ -1,4 +1,3 @@
-// frontend/src/pages/FeedbackDetail.jsx
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ChevronLeft, Sparkles, FileText, Clock, AlertCircle, Video } from 'lucide-react';
@@ -35,7 +34,6 @@ const handleGenerateSummary = async () => {
   try {
     const res = await axiosInstance.post(`/video/${feedback.video._id}/insights`);
     
-    // FIX: Only update state if insights exist in the response
     if (res.data && res.data.insights) {
       setFeedback(prev => ({
         ...prev,
